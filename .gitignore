@@ -1,0 +1,60 @@
+data/raw/*.csv
+data/processed/*.pkl
+*.pkl
+
+# Model files (large)
+models_hybrid_v4/*.zip
+models_hybrid_v4/best_*/
+models_hybrid_v5/*.zip
+models_hybrid_v5/best_*/
+logs/
+tensorboard_logs/
+__pycache__/
+*.pyc
+*.class
+
+# LSTM Saved Models (large)
+saved_models_5d/
+saved_models_20d/
+saved_models_multivariate/
+dist/
+
+# Results and Runs (large)
+results_hybrid_v4/
+results_hybrid_v5/
+results_backtest_v4*/
+results_backtest_v5*/
+daily_runs_v5*/
+intraday_runs_v5*/
+var/
+
+# Data folder
+data/-info/
+.installed.cfg
+
+# Evaluation results
+evaluation_results/
+
+# Virtual Environment
+env/
+.venv/
+
+# Evaluation CSVs
+buy_agent_v5_evaluation.csv
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+.vs/
+.idea/
+
+# Large Directories
+models_hybrid_v5
+data
+01 訓練10M步  並且加上KD濾網的腳本
