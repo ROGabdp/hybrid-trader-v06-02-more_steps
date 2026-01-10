@@ -20,6 +20,38 @@
     python daily_ops_v5_intraday_dynamic_n_kd_filter.py -i
 
 
+3. 增加strat 3策略:
+
+    1. 資金注入與首次買入 (Yearly Capital Injection)
+        資金來源：每年年初 (1月) 注入固定的年度資金 (例如 60 萬元)。
+        買入行為 (Lump Sum)：資金注入當下，立即全額買入股票，建立初始倉位。這是為了模擬一般的定期定值投資人行為。
+    2. 賣出機制 (AI Managed Exit)
+        所有持倉 (包含年初買入的倉位和後續買回的倉位) 都受 AI Sell Agent 監控：
+
+        賣出條件：
+           AI 訊號：Sell Agent 預測 "SELL" 且信心度 > sell_threshold (預設 0.6)。
+           停損 (Stop Loss)：如果持倉報酬率 < -8% (即槓桿後下跌 8%)，強制停損賣出。
+        否決機制 (Consensus)：如果 AI 想賣，但 Buy Agent 同時發出強烈買入訊號 (信心 > 0.5)，則 暫緩賣出 (Hold)。
+        資金去向：賣出後的資金會全數回到 yearly_pool (年度資金池)，等待再買入機會。
+    3. 再買回機制 (AI Managed Re-entry)
+        當資金池有閒置資金 (來自這一年賣出的股票) 時，由 AI Buy Agent 決定何時進場：
+
+        資金分配 (Chunked Re-entry)：
+        為了平滑風險，不一次買滿。
+        計算方式：每筆投入金額 = 目前池中總資金 / 當年度剩餘月數。
+        (這就是您先前要求改回的 "分批買回" 邏輯)。
+    買入條件：
+        AI 訊號：Buy Agent 預測 "BUY"。
+        動態濾網 (Dynamic Filter)：確認目前不是熊市，或者有突破 Donchian 通道。
+        KD 濾網：KD 值 < kd_threshold (預設 90)。
+    執行：條件滿足時，買入一筆計算出的金額。
+    4. 2x 槓桿機制 (Leverage Protection)
+        觸發：當股價從歷史高點回落超過 8% 時，自動啟動 2x 槓桿模式。
+        效果：所有持倉的報酬率波動變為 2 倍 (模擬融資或槓桿ETF效果)，目的是在超跌反彈時加速獲利。
+        結束：當股價漲回觸發點時，槓桿模式結束。
+
+
+
 # hybrid-trader-v06-02 是以 hybrid-trader-v06 作為基礎來修改的
 
 # v06-02 重點
