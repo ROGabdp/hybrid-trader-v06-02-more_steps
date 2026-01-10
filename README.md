@@ -5,7 +5,7 @@
 # v06-02-more_steps 重點
 
 1. 以v06-02為基礎，增加訓練步數至10M steps。
-2. 增加回測腳本，置入kd filter，預設 KD<90 AI才能買入，可得到最佳的 Calmar Ratio (報酬/回撤比)，KD 90 的數值 (0.406) 是所有測試中最優的
+2. 增加回測腳本，置入kd filter，預設 KD<90 AI才能買入，可得到最佳的 Calmar Ratio (報酬/回撤比)，KD 90 的數值 (0.406) 是所有測試中最優的。並且停損時連同DCA倉一起停損。
 
 先前的腳本
 
@@ -52,7 +52,24 @@
         觸發：當股價從歷史高點回落超過 8% 時，自動啟動 2x 槓桿模式。
         效果：所有持倉的報酬率波動變為 2 倍 (模擬融資或槓桿ETF效果)，目的是在超跌反彈時加速獲利。
         結束：當股價漲回觸發點時，槓桿模式結束。
+4. 增加Kelly Criterion (凱利公式 Fractional Kelly with Cash Constraint)
 
+python backtest_v5_dca_hybrid_dynamic_n_kd_filter_kelly.py --enable-kelly --kelly-fraction 0.06
+
+    指令參數說明：
+    --enable-kelly: 啟用凱利公式邏輯（預設已開啟，若設為 False 則會退回到均分法）。
+    --kelly-fraction: 凱利下注比例。
+        0.06: 代表 Half Kelly（目前建議值）。
+        0.12: 代表 Full Kelly（風險極高）。
+        0.03: 代表 Quarter Kelly（更保守）。
+    --kd-threshold: AI 買入的 KD 過濾門檻（預設 90）。
+    --sell-threshold: 賣出訊號的信心門檻（預設 0.6）。
+
+
+
+
+
+    
 
 # hybrid-trader-v06-02 是以 hybrid-trader-v06 作為基礎來修改的
 
