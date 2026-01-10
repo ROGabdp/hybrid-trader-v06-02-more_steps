@@ -512,7 +512,7 @@ class LeveragedSharedPoolBacktester:
         if leveraged_mode and current_leverage_start:
             self.leverage_periods.append((current_leverage_start, dates[-1]))
         
-        # 保存未平倉持倉
+        # 保存未平倉持倉 (AI)
         self.open_positions = []
         for pos in ai_positions:
             self.open_positions.append({
@@ -522,6 +522,20 @@ class LeveragedSharedPoolBacktester:
                 'cost': pos['cost'],
                 'leverage': pos['leverage']
             })
+        
+        # 保存未平倉持倉 (DCA)
+        self.dca_open_positions = []
+        for pos in dca_positions:
+            self.dca_open_positions.append({
+                'buy_date': dates[pos['buy_idx']].strftime('%Y-%m-%d'),
+                'buy_price': pos['buy_price'],
+                'shares': pos['shares'],
+                'cost': pos['cost'],
+                'leverage': pos['leverage']
+            })
+        
+        # 保存剩餘現金池
+        self.remaining_cash = yearly_pool
             
         return self._calculate_metrics()
 
@@ -1292,6 +1306,25 @@ def main():
         print(f"         未平倉 AI 持倉: {len(bt1.open_positions)} 筆")
     else:
         print(f"[Info] Strat 1 無未平倉 AI 持倉")
+    
+    # 2.55 DCA Open Positions CSV (未平倉 DCA 持倉)
+    if hasattr(bt1, 'dca_open_positions') and bt1.dca_open_positions:
+        dca_pos1_df = pd.DataFrame(bt1.dca_open_positions)
+        dca_pos1_path = os.path.join(RESULTS_PATH, f'open_positions_dca_strat1_{start_str}_{end_str}.csv')
+        dca_pos1_df.to_csv(dca_pos1_path, index=False, encoding='utf-8-sig')
+        print(f"[Output] Strat 1 DCA Open Positions CSV: {dca_pos1_path}")
+        print(f"         未平倉 DCA 持倉: {len(bt1.dca_open_positions)} 筆")
+    else:
+        print(f"[Info] Strat 1 無未平倉 DCA 持倉")
+    
+    # 2.56 Remaining Cash JSON (剩餘現金池)
+    if hasattr(bt1, 'remaining_cash'):
+        import json
+        cash_info = {'remaining_cash': bt1.remaining_cash}
+        cash_path = os.path.join(RESULTS_PATH, f'remaining_cash_strat1_{start_str}_{end_str}.json')
+        with open(cash_path, 'w', encoding='utf-8') as f:
+            json.dump(cash_info, f)
+        print(f"[Output] Strat 1 Remaining Cash: ${bt1.remaining_cash:,.0f}")
     
     # 2.6 Leverage Events CSV
     if bt1.leverage_events:

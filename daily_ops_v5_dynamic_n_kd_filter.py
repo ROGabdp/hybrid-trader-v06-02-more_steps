@@ -158,7 +158,8 @@ def load_latest_backtest_status(backtest_start: str = None, interactive: bool = 
                 'buy_date': row['buy_date'],
                 'buy_price': row['buy_price'],
                 'shares': row.get('shares', 1),
-                'cost': row.get('cost', row['buy_price'])
+                'cost': row.get('cost', row['buy_price']),
+                'leverage': row.get('leverage', 1.0)
             })
         print(f"  AI 持倉: {len(open_positions)} 筆")
     
@@ -166,6 +167,30 @@ def load_latest_backtest_status(backtest_start: str = None, interactive: bool = 
     leveraged_mode = bool(last_row.get('leveraged_mode', False))
     current_leverage = float(last_row.get('current_leverage', 1.0))
     positions_2x = int(last_row.get('positions_2x', 0))
+    
+    # 讀取 DCA 持倉資訊
+    dca_pos_file = selected_csv.replace('daily_action_strat1_', 'open_positions_dca_strat1_')
+    dca_positions_list = []
+    if os.path.exists(dca_pos_file):
+        dca_pos_df = pd.read_csv(dca_pos_file)
+        for _, row in dca_pos_df.iterrows():
+            dca_positions_list.append({
+                'buy_date': row['buy_date'],
+                'buy_price': row['buy_price'],
+                'shares': row.get('shares', 1),
+                'cost': row.get('cost', row['buy_price']),
+                'leverage': row.get('leverage', 1.0)
+            })
+        print(f"  DCA 持倉: {len(dca_positions_list)} 筆")
+    
+    # 讀取剩餘現金池
+    cash_file = selected_csv.replace('daily_action_strat1_', 'remaining_cash_strat1_').replace('.csv', '.json')
+    remaining_cash = 0
+    if os.path.exists(cash_file):
+        with open(cash_file, 'r', encoding='utf-8') as f:
+            cash_info = json.load(f)
+            remaining_cash = cash_info.get('remaining_cash', 0)
+        print(f"  剩餘現金: ${remaining_cash:,.0f}")
     
     result = {
         'found': True,
@@ -179,7 +204,9 @@ def load_latest_backtest_status(backtest_start: str = None, interactive: bool = 
         'positions_2x': positions_2x,
         'peak_price': current_peak_price,
         'note': last_row.get('note', ''),
-        'open_positions': open_positions
+        'open_positions': open_positions,
+        'dca_positions_list': dca_positions_list,
+        'remaining_cash': remaining_cash
     }
     
     leverage_status = "🔥 ON (2x)" if leveraged_mode else "OFF (1x)"
@@ -660,6 +687,63 @@ def generate_report(workspace: dict, df: pd.DataFrame, res: dict, date_str: str,
         lines.append(f"   🤖 AI 倉位: {backtest_status['ai_positions']} 倉")
         lines.append(f"   📊 總倉數: {backtest_status['total_positions']} 倉")
         lines.append(f"   📝 最後操作: {backtest_status.get('note', 'N/A')}")
+        
+        # 💰 資金與倉位價值計算
+        lines.append("-" * 50)
+        lines.append("💰 [資金與倉位價值]")
+        
+        ai_positions_list = backtest_status.get('open_positions', [])
+        dca_positions_list = backtest_status.get('dca_positions_list', [])
+        
+        # 計算 AI 持倉: 成本 & 目前價值
+        ai_total_cost = 0
+        ai_total_shares = 0
+        ai_total_value = 0
+        for pos in ai_positions_list:
+            cost = float(pos.get('cost', 0))
+            shares = float(pos.get('shares', 1))
+            leverage = float(pos.get('leverage', 1.0))
+            ai_total_cost += cost
+            ai_total_shares += shares
+            # 目前價值 = shares × current_price × leverage
+            ai_total_value += shares * close_price * leverage
+        
+        # 計算 DCA 持倉: 成本 & 目前價值
+        dca_total_cost = 0
+        dca_total_shares = 0
+        dca_total_value = 0
+        for pos in dca_positions_list:
+            cost = float(pos.get('cost', 0))
+            shares = float(pos.get('shares', 1))
+            leverage = float(pos.get('leverage', 1.0))
+            dca_total_cost += cost
+            dca_total_shares += shares
+            # 目前價值 = shares × current_price × leverage
+            dca_total_value += shares * close_price * leverage
+        
+        total_cost = ai_total_cost + dca_total_cost
+        total_value = ai_total_value + dca_total_value
+        unrealized_pnl = total_value - total_cost
+        unrealized_pnl_pct = (unrealized_pnl / total_cost * 100) if total_cost > 0 else 0
+        
+        lines.append(f"   📦 AI 持倉成本:  ${ai_total_cost:,.0f} ({ai_total_shares:.0f} 股)")
+        lines.append(f"   📦 DCA 持倉成本: ${dca_total_cost:,.0f} ({dca_total_shares:.0f} 股)")
+        lines.append(f"   ─────────────────────────")
+        lines.append(f"   💵 總投入成本:   ${total_cost:,.0f}")
+        lines.append(f"   💎 目前市值:     ${total_value:,.0f}")
+        pnl_icon = "📈" if unrealized_pnl >= 0 else "📉"
+        lines.append(f"   {pnl_icon} 未實現損益:   ${unrealized_pnl:+,.0f} ({unrealized_pnl_pct:+.2f}%)")
+        lines.append(f"   ─────────────────────────")
+        remaining_cash = backtest_status.get('remaining_cash', 0)
+        lines.append(f"   💵 剩餘可用現金: ${remaining_cash:,.0f}")
+        total_assets = total_value + remaining_cash
+        lines.append(f"   🏦 總資產:       ${total_assets:,.0f}")
+        
+        # 若無 DCA 持倉明細但有 DCA 倉數，提示需要更新回測
+        if backtest_status['dca_positions'] > 0 and len(dca_positions_list) == 0:
+            lines.append(f"   ⚠️ 注意: DCA 持倉明細未儲存於回測結果，請更新回測腳本")
+        if remaining_cash == 0 and backtest_status['total_positions'] > 0:
+            lines.append(f"   ⚠️ 注意: 剩餘現金未儲存，請重新執行回測腳本")
         
         # 預測今日操作
         lines.append("-" * 50)

@@ -1,9 +1,9 @@
 # v06-02-more_steps 重點
 
 1. 以v06-02為基礎，增加訓練步數至10M steps。
-2. 增加回測腳本，置入kd filter，預設 KD<90 AI才能買入，可得到最佳的 Calmar Ratio (報酬/回撤比)，KD 90 的數值 (0.406) 是所有測試中最優的。並且停損時連同DCA倉一起停損。
+2. 增加回測腳本，置入kd filter，預設 KD<90 AI才能買入，可得到最佳的 Calmar Ratio (報酬/回撤比)，KD 90 的數值 (0.406) 是所有測試中最優的。並且停損時連同DCA倉一起停損。 
 
-先前的腳本
+**先前的腳本**
 
     * 盤後
     python backtest_v5_dca_hybrid_dynamic_n.py --start 2025-12-09
@@ -11,10 +11,11 @@
     * 盤中
     python daily_ops_v5_intraday_dynamic_n.py -i
 
-有KD濾網的腳本
+**有KD濾網的腳本**
+ **修改了回測和daily_ops的腳本，增加剩餘資金與倉位價值計算**
 
     * 盤後
-    python backtest_v5_dca_hybrid_dynamic_n_kd_filter.py --start 2025-12-09
+    python backtest_v5_dca_hybrid_dynamic_n_kd_filter.py --start 2023-12-09
     python daily_ops_v5_dynamic_n_kd_filter.py   
     * 盤中
     python daily_ops_v5_intraday_dynamic_n_kd_filter.py -i
