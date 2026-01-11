@@ -2,6 +2,21 @@
 
 這是一個先進的演算法交易系統，結合了用於價格預測的 **LSTM-SSAM** (Long Short-Term Memory with Sequential Self-Attention) 以及用於交易決策的 **Pro Trader RL** (Reinforcement Learning)。
 
+
+# 每天執行這3個
+
+    * 盤中 (大倉位預測)
+
+    python daily_ops_v5_intraday_dynamic_n_kd_filter.py -i
+
+    * 盤後 (大倉位確認和2x槓桿確認)
+
+    python backtest_v5_dca_hybrid_dynamic_n_kd_filter.py --start 2024-01-01  
+
+    python backtest_v5_2x_god_fuse.py --start 2026-01-08
+
+
+
 # v06-02-more_steps 重點
 
 1. 以v06-02為基礎，增加訓練步數至10M steps。
@@ -18,22 +33,33 @@
 **有KD濾網的腳本**
  **修改了回測和daily_ops的腳本，增加剩餘資金與倉位價值計算**
 
-    * 盤後
-    python backtest_v5_dca_hybrid_dynamic_n_kd_filter.py --start 2023-12-09
-    python daily_ops_v5_dynamic_n_kd_filter.py   
+=======================================
+
+**盤後會直接輸出報告，不需要跑daily_ops**
+
+    python backtest_v5_dca_hybrid_dynamic_n_kd_filter.py --start 2024-01-01  
+
     * 盤中
     python daily_ops_v5_intraday_dynamic_n_kd_filter.py -i
-    
+
+=======================================
 
 2. 增加完全用兩倍槓桿操作的腳本 (會產出最後一天的總結報告，做明日開盤買賣的參考)
 
 **兩倍槓桿盤後**
 
-    python backtest_v5_2x_god.py --start 2023-12-09 
+    python backtest_v5_2x_god.py 
 
 **兩倍槓桿加上保險盤後 (最終優化後的 Fuse 參數配置：CB_TRIGGER_THRESHOLD = -0.15 (觸發：-15% 回撤)CB_COOLDOWN_DAYS = 10 (冷卻：10 天)DELEVERAGE_RATIO = 0.50 (減倉：50%))**
+
+=======================================
+
+**會直接輸出報告，不需要跑daily_ops**
     
-    python backtest_v5_2x_god_fuse.py --start 2023-12-09
+    python backtest_v5_2x_god_fuse.py --start 2026-01-08
+
+=======================================
+
 
 **God Mode 回測結果 (2017/10/16 - 2023/10/15)：**
     總報酬 (Total Return)：暴增至 +82.95% (淨利約 348萬)。遠勝大盤標竿 (+35.81%) 兩倍以上。相較於上一版 (+31.05%) 更是巨大的飛躍。
@@ -64,7 +90,7 @@
     
     一句話總結：這是一個「漲時重錘出擊、大賺時放長線、跌時精準閃避」的 2x 槓桿複利策略。
 
-**增加fuse機制 和 冷卻期**
+**增加fuse機制**
     -15% 是最佳平衡點：
     Max DD 壓低至 -24.6% (遠低於大盤 -31.6%)
     總報酬依然保持最高 +183.4%
@@ -92,9 +118,9 @@
     報酬明顯更優 (+188.5% vs +183.4%)
     Sharpe Ratio 最佳
 
+    
 
-
-3. 增加strat 3策略:
+**增加strat 3策略:**
 
     1. 資金注入與首次買入 (Yearly Capital Injection)
         資金來源：每年年初 (1月) 注入固定的年度資金 (例如 60 萬元)。
@@ -123,6 +149,7 @@
         觸發：當股價從歷史高點回落超過 8% 時，自動啟動 2x 槓桿模式。
         效果：所有持倉的報酬率波動變為 2 倍 (模擬融資或槓桿ETF效果)，目的是在超跌反彈時加速獲利。
         結束：當股價漲回觸發點時，槓桿模式結束。
+
 4. 增加Kelly Criterion (凱利公式 Fractional Kelly with Cash Constraint)
 
 python backtest_v5_dca_hybrid_dynamic_n_kd_filter_kelly.py --enable-kelly --kelly-fraction 0.06
@@ -135,8 +162,6 @@ python backtest_v5_dca_hybrid_dynamic_n_kd_filter_kelly.py --enable-kelly --kell
         0.03: 代表 Quarter Kelly（更保守）。
     --kd-threshold: AI 買入的 KD 過濾門檻（預設 90）。
     --sell-threshold: 賣出訊號的信心門檻（預設 0.6）。
-
-
 
 
 

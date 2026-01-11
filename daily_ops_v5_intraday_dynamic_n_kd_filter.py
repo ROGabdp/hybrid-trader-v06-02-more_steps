@@ -678,7 +678,7 @@ def generate_intraday_report(workspace: dict, df: pd.DataFrame, res: dict, date_
     
     lines = []
     lines.append("=" * 50)
-    lines.append(f"📅 V5 盤中即時分析 (動態濾網) - {date_str}")
+    lines.append(f"📅 V5 盤中摘要 (基於即時價格) - {date_str}")
     lines.append(f"⏰ 更新時間: {datetime.now().strftime('%H:%M:%S')}")
     lines.append("=" * 50)
     lines.append(f"📊 Open:  {o:,.2f}")
@@ -864,83 +864,141 @@ def generate_intraday_report(workspace: dict, df: pd.DataFrame, res: dict, date_
         lines.append(f"   💵 剩餘可用現金: ${remaining_cash:,.0f}")
         total_assets = total_value + remaining_cash
         lines.append(f"   🏦 總資產:       ${total_assets:,.0f}")
-        
-        # 若無 DCA 持倉明細但有 DCA 倉數，提示需要更新回測
-        if backtest_status['dca_position_count'] > 0 and len(dca_positions_list) == 0:
-            lines.append(f"   ⚠️ 注意: DCA 持倉明細未儲存於回測結果，請更新回測腳本")
-        if remaining_cash == 0 and backtest_status['total_position_count'] > 0:
-            lines.append(f"   ⚠️ 注意: 剩餘現金未儲存，請重新執行回測腳本")
-        
-        # 預測今日操作
         lines.append("-" * 50)
-        lines.append("🔮 [今日預測] (基於盤中價格模擬)")
         
+        # ===== 新增：當日交易總結 (含金額統計) =====
+        lines.append(f"📝 [當日交易總結] (盤中模擬: 以即時價 {c:,.2f} 執行)")
+        
+        # 計算預測的買入/賣出金額
         ai_action = res.get('ai_action', 'WAIT')
-        ai_positions = backtest_status['ai_position_count']
-        dca_positions = backtest_status['dca_position_count']
+        buy_signal = res.get('buy_signal', 'WAIT')
+        kd_pass = res.get('kd_pass', True)
         
-        # 預測買入 (V5: 無濾網限制，純看 AI 決策)
-        predicted_buy = 0
-        if ai_action == 'BUY':
-            lines.append(f"   🟢 買入預測: AI+1倉 (V5 無濾網限制, AI建議BUY)")
-            predicted_buy = 1
-        else:
-            lines.append(f"   ⚪ 買入預測: 無 (AI:{ai_action})")
+        # 預測買入金額（基於剩餘現金，假設用 1/12）
+        predicted_buy_amount = 0
+        predicted_buy_count = 0
         
-        # 預測賣出 (使用 position_decisions)
+        if buy_signal == 'BUY' and kd_pass:
+            # 估計買入金額（簡化：用剩餘現金的 1/12）
+            if remaining_cash > 0:
+                predicted_buy_amount = remaining_cash / 12
+                predicted_buy_count = 1
+        
+        # 預測賣出金額（基於持倉）
+        predicted_sell_amount = 0
+        predicted_sell_count = 0
         position_decisions = res.get('position_decisions', [])
-        predicted_sell = 0
-        current_price = float(intraday_data[4])  # intraday_data = (date, o, h, l, c)
         
+        for pd in position_decisions:
+            if pd.get('final_action') == 'SELL':
+                # 找到對應的持倉以取得成本
+                buy_price = pd.get('buy_price', 0)
+                # 從 ai_positions_list 找到對應的 cost
+                for pos in ai_positions_list:
+                    if abs(float(pos.get('buy_price', 0)) - buy_price) < 0.01:  # 價格匹配
+                        predicted_sell_amount += float(pos.get('cost', 0))
+                        predicted_sell_count += 1
+                        break
+        
+        # 顯示交易金額統計
+        if predicted_buy_amount > 0 or predicted_sell_amount > 0:
+            lines.append("")
+            lines.append("   💰 預測交易金額統計:")
+            
+            if predicted_buy_amount > 0:
+                lines.append("   ├─ 📈 預計買入:")
+                lines.append(f"   │  • 無槓桿 (1x): {predicted_buy_count} 倉 ≈ ${predicted_buy_amount:,.0f}")
+                lines.append(f"   │  • 總買入: ${predicted_buy_amount:,.0f}")
+            
+            if predicted_sell_amount > 0:
+                lines.append("   ├─ 📉 預計賣出:")
+                lines.append(f"   │  • 無槓桿 (1x): {predicted_sell_count} 倉 ≈ ${predicted_sell_amount:,.0f}")
+                lines.append(f"   │  • 總賣出: ${predicted_sell_amount:,.0f}")
+            
+            net_amount = predicted_buy_amount - predicted_sell_amount
+            net_symbol = "淨買入" if net_amount > 0 else "淨賣出" if net_amount < 0 else "持平"
+            lines.append(f"   └─ 💼 {net_symbol}: ≈ ${abs(net_amount):,.0f}")
+            lines.append("")
+        
+        # 交易判斷說明
+        if buy_signal == 'BUY' and kd_pass:
+            regime_status = res.get('regime_status', {})
+            regime_mode = regime_status.get('regime', 'BULL')
+            if regime_mode == 'BULL':
+                lines.append("   🟢 盤中模擬: AI+1倉 (V5 無濾網限制, AI判斷BUY)")
+            else:
+                lines.append("   🟡 盤中模擬: AI+1倉 (通過 10日高點濾網)")
+            lines.append("   ℹ️ 實際執行: 收盤後再確認價格")
+        elif buy_signal == 'BUY' and not kd_pass:
+            kd_value = res.get('kd_value', 0)
+            lines.append(f"   ⏸️ 無交易: KD濾網未通過 (K={kd_value:.1f})")
+        else:
+            lines.append("   ⏸️ 無交易: AI 判斷 WAIT")
+        lines.append("-" * 50)
+        
+        # ===== AI 持倉明細 (對齊回測格式) =====
         if position_decisions:
-            lines.append("-" * 50)
             lines.append("📦 [AI持倉明細 + Sell Agent 判斷]")
             
             for i, pd in enumerate(position_decisions, 1):
                 buy_date = pd.get('buy_date', 'N/A')
                 buy_price = pd.get('buy_price', 0)
                 return_pct = pd.get('return_pct', 0)
-                action = pd.get('action', 'HOLD')
-                confidence = pd.get('confidence', 0)
                 final_action = pd.get('final_action', 'HOLD')
                 triggered_stop_loss = pd.get('triggered_stop_loss', False)
+                confidence = pd.get('confidence', 0)
                 
-                # 決定顯示格式
-                # 決定顯示格式
+                # 決定狀態顯示
                 if triggered_stop_loss:
-                    status_icon = "🔴 SELL"
-                    reason = f"停損觸發 (AI: {action} {confidence:.1%})"
-                elif final_action == 'SELL':
-                    status_icon = "🔴 SELL"
-                    reason = f"AI決定 ({confidence:.1%})"
+                    status = f"🔴 SELL 建議 (停損 {pd.get('current_return', 1)*100:.1f}%)"
                 elif pd.get('is_consensus_hold', False):
-                    status_icon = "🟢 HOLD"
-                    reason = f"AI賣訊被否決 ({pd.get('veto_reason')})"
+                    status = f"🟢 HOLD AI賣訊被否決 ({pd.get('veto_reason', '')})"
+                elif final_action == 'SELL':
+                    status = f"🔴 SELL 建議 (AI賣出 {confidence*100:.1f}%)"
                 else:
-                    status_icon = "🟢 HOLD"
-                    reason = f"AI決定 ({confidence:.1%})"
+                    status = f"🟢 HOLD AI決定 ({(1-confidence)*100:.1f}%)"
                 
                 lines.append(f"   #{i} 買入: {buy_date} @ {buy_price:,.2f}")
-                lines.append(f"       報酬: {return_pct:+.2f}% | {status_icon} {reason}")
-                
-                if final_action == 'SELL':
-                    predicted_sell += 1
-        elif ai_positions > 0:
-            lines.append(f"   ⚠️ 無持倉明細資料")
-        else:
-            lines.append(f"   ⚪ 賣出預測: 無 (AI 無持倉)")
+                lines.append(f"       報酬: {return_pct:+.2f}% | {status}")
+            lines.append("-" * 50)
         
-        # 計算預估總倉
+        # ===== 新增：DCA 持倉明細 =====
+        if dca_positions_list and len(dca_positions_list) > 0:
+            lines.append("📦 [DCA持倉明細]")
+            
+            for idx, pos in enumerate(dca_positions_list, 1):
+                buy_price = float(pos.get('buy_price', 0))
+                buy_date = pos.get('buy_date', 'N/A')
+                leverage = float(pos.get('leverage', 1.0))
+                
+                if buy_price > 0:
+                    # 計算報酬率
+                    base_return = current_price / buy_price
+                    leveraged_return = 1 + (base_return - 1) * leverage
+                    return_pct = (leveraged_return - 1) * 100
+                    
+                    lev_tag = f" [2x]" if leverage > 1 else ""
+                    lines.append(f"   #{idx} 買入: {buy_date} @ {buy_price:,.2f}{lev_tag}")
+                    lines.append(f"       報酬: {return_pct:+.2f}% | 槓桿: {leverage:.1f}x")
+            lines.append("-" * 50)
+        
+        # ===== 預估收盤後倉位 (Intraday 特有) =====
+        ai_positions = backtest_status['ai_position_count']
+        dca_positions = backtest_status['dca_position_count']
+        
+        predicted_buy = 1 if (buy_signal == 'BUY' and kd_pass) else 0
+        predicted_sell = sum(1 for pd in position_decisions if pd.get('final_action') == 'SELL')
+        
         predicted_ai = ai_positions + predicted_buy - predicted_sell
         predicted_total = dca_positions + predicted_ai
         
-        lines.append("-" * 50)
         lines.append("📊 [預估收盤後倉位]")
-        lines.append(f"   DCA: {dca_positions} 倉 (不變)")
-        change = predicted_buy - predicted_sell
-        change_str = f"+{change}" if change > 0 else str(change) if change < 0 else "±0"
-        lines.append(f"   AI:  {ai_positions} → {predicted_ai} 倉 ({change_str})")
-        lines.append(f"   總計: {backtest_status['total_position_count']} → {predicted_total} 倉")
+        lines.append(f"   🏛️  DCA: {dca_positions} 倉")
+        lines.append(f"   🤖 AI:  {predicted_ai} 倉")
+        lines.append(f"   📊 總計: {predicted_total} 倉")
+        if backtest_status.get('positions_2x', 0) > 0:
+            lines.append(f"   🔥 其中 2x 槓桿: {backtest_status.get('positions_2x', 0)} 倉")
+
         
     else:
         lines.append("💼 [回測持倉狀態] 未找到回測結果")
