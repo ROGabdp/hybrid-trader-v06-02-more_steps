@@ -47,7 +47,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # 設定
 PROJECT_PATH = os.path.dirname(os.path.abspath(__file__))
 V5_MODELS_PATH = os.path.join(PROJECT_PATH, 'models_hybrid_v5')
-RESULTS_PATH = os.path.join(PROJECT_PATH, 'results_backtest_v5_2x_god')
+RESULTS_PATH = os.path.join(PROJECT_PATH, 'results_backtest_v5_2x_god_fuse')
 CACHE_DIR = os.path.join(PROJECT_PATH, 'data', 'processed')
 
 DEFAULT_START_DATE = '2017-10-16'
@@ -56,11 +56,17 @@ INITIAL_CAPITAL = 600_000
 YEARLY_INJECTION = 600_000
 TRANSACTION_FEE = 0.0015
 
-# [Modified Parameters]
+# [Modified Parameters - God Mode]
 HARD_STOP_PCT = 0.20          # 硬性停損 -20%
 TRAIL_ACTIVATION_PCT = 0.20   # 移動停利啟動門檻 +20%
 TRAIL_CALLBACK_BASE = 0.10    # 移動停利回檔容忍 (基礎 10%)
 POSITION_SIZE_MAX = 10_000_000 # 單筆金額上限 1000萬 (幾乎無上限)
+
+# [Circuit Breaker (Fuse) Parameters - Defaults]
+CB_TRIGGER_THRESHOLD = -0.15   # 觸發點：總資產從最高點回落 -15% (根據參數掃描最優)
+CB_RESET_THRESHOLD = -0.15     # 重置點：回撤縮小至 -15% 解除警報
+DELEVERAGE_RATIO = 0.50        # 減倉比例：強制賣出持倉的 50%
+CB_COOLDOWN_DAYS = 20          # 冷卻期：觸發後至少 20 天不恢復
 
 plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'SimHei', 'Arial Unicode MS']
 plt.rcParams['axes.unicode_minus'] = False
@@ -169,7 +175,7 @@ class Position:
 
 
 class StrategyRunner:
-    def __init__(self, buy_model, df: pd.DataFrame):
+    def __init__(self, buy_model, df: pd.DataFrame, cb_threshold=CB_TRIGGER_THRESHOLD, cb_cooldown=CB_COOLDOWN_DAYS, results_path=RESULTS_PATH):
         self.buy_model = buy_model
         self.df = df
         self.syn_asset = SyntheticLeveragedAsset(df)
@@ -177,8 +183,19 @@ class StrategyRunner:
         self.positions = []
         self.closed_trades = []
         self.equity_curve = []
-        self.total_invested = INITIAL_CAPITAL # 包含初始現金
+        self.total_invested = INITIAL_CAPITAL
         self.daily_logs = []
+        
+        # Circuit Breaker Settings (Configurable)
+        self.cb_threshold = cb_threshold
+        self.cb_cooldown = cb_cooldown
+        self.results_path = results_path
+        
+        # Circuit Breaker State
+        self.circuit_breaker_active = False
+        self.peak_equity = INITIAL_CAPITAL
+        self.cb_events = []
+        self.cb_trigger_day_idx = None  # Track when CB was triggered (for cooldown)
 
     def run(self):
         dates = self.df.index
@@ -331,6 +348,74 @@ class StrategyRunner:
             pos_value = sum(p.shares * syn_row['Syn_Close'] for p in self.positions)
             total_equity = self.cash + pos_value
             
+            # --- 5b. Circuit Breaker Logic ---
+            # Update Peak
+            if total_equity > self.peak_equity:
+                self.peak_equity = total_equity
+            
+            # Calculate Drawdown
+            current_dd = (total_equity - self.peak_equity) / self.peak_equity
+            
+            # State Machine
+            if not self.circuit_breaker_active:
+                # Normal Mode: Check for Trigger
+                if current_dd <= self.cb_threshold:
+                    self.circuit_breaker_active = True
+                    self.cb_trigger_day_idx = i  # Record trigger day
+                    self.cb_events.append({'date': date, 'event': 'TRIGGER', 'dd': current_dd, 'equity': total_equity})
+                    print(f"[CB TRIGGER] {date.date()} DD={current_dd*100:.2f}% (Threshold: {self.cb_threshold*100:.0f}%) | Deleveraging...")
+                    
+                    # De-leverage: Sell 50% of all positions
+                    positions_to_reduce = self.positions[:]
+                    for pos in positions_to_reduce:
+                        sell_shares = pos.shares * DELEVERAGE_RATIO
+                        sell_price = syn_row['Syn_Close']  # Sell at close
+                        revenue = sell_shares * sell_price
+                        fee = revenue * TRANSACTION_FEE
+                        net_in = revenue - fee
+                        self.cash += net_in
+                        
+                        # Reduce position
+                        pos.shares -= sell_shares
+                        cost_reduction = pos.cost_basis * DELEVERAGE_RATIO
+                        pos.cost_basis -= cost_reduction
+                        
+                        # Log as trade (partial exit)
+                        self.closed_trades.append({
+                            'entry_date': pos.entry_date,
+                            'exit_date': date,
+                            'entry_price': pos.entry_price,
+                            'exit_price': sell_price,
+                            'reason': 'CB_DELEVERAGE',
+                            'return': (sell_price - pos.entry_price) / pos.entry_price,
+                            'profit': net_in - (cost_reduction * (1+TRANSACTION_FEE)),
+                            'hold_days': (date - pos.entry_date).days
+                        })
+                    
+                    # Remove positions with near-zero shares
+                    self.positions = [p for p in self.positions if p.shares > 0.01]
+                    
+                    # Recalculate after deleverage
+                    pos_value = sum(p.shares * syn_row['Syn_Close'] for p in self.positions)
+                    total_equity = self.cash + pos_value
+                    
+            else:
+                # Defensive Mode: Check for Reset
+                # Condition 1: DD must recover past reset threshold
+                # Condition 2: Cooldown period must have passed
+                days_since_trigger = i - self.cb_trigger_day_idx if self.cb_trigger_day_idx else 0
+                cooldown_passed = days_since_trigger >= self.cb_cooldown
+                
+                if current_dd > CB_RESET_THRESHOLD and cooldown_passed:
+                    self.circuit_breaker_active = False
+                    self.cb_events.append({'date': date, 'event': 'RESET', 'dd': current_dd, 'equity': total_equity, 'cooldown_days': days_since_trigger})
+                    print(f"[CB RESET] {date.date()} DD={current_dd*100:.2f}% (After {days_since_trigger} days) | Returning to Normal Mode")
+                    
+            # Halve pending buy if in defensive mode
+            if self.circuit_breaker_active and pending_buy:
+                pending_buy = pending_buy * 0.5
+                # print(f"  [CB] Defensive Mode: Buy amount halved to {pending_buy:.0f}")
+            
             self.equity_curve.append({
                 'date': date,
                 'equity': total_equity,
@@ -338,9 +423,9 @@ class StrategyRunner:
                 'positions': len(self.positions),
                 'syn_price': syn_row['Syn_Close'],
                 'twii_price': close,
-                'ai_conf': ai_conf if should_buy else None # Only record when triggered check? Or check every day?
-                # Creating a new model loop every day for logging might be slow, but ok for backtest.
-                # To be precise, let's log current AI conf if we checked it, or nan
+                'ai_conf': ai_conf if should_buy else None,
+                'cb_active': self.circuit_breaker_active,
+                'dd': current_dd
             })
             
             self.daily_logs.append({
@@ -484,7 +569,7 @@ class StrategyRunner:
         
         # Save
         filename = f"end_date_summary_{self.df.index[0].date().strftime('%Y%m%d')}_{self.df.index[-1].date().strftime('%Y%m%d')}.txt"
-        out_path = os.path.join(RESULTS_PATH, filename)
+        out_path = os.path.join(self.results_path, filename)
         with open(out_path, 'w', encoding='utf-8') as f:
             f.write(report_content)
         print(f"End Date Summary saved to: {out_path}")
@@ -589,14 +674,21 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--start', default=DEFAULT_START_DATE)
     parser.add_argument('--end', default=DEFAULT_END_DATE)
+    parser.add_argument('--cb-threshold', type=float, default=CB_TRIGGER_THRESHOLD,
+                        help='Circuit Breaker trigger threshold (e.g., -0.25 for -25%)')
+    parser.add_argument('--cb-cooldown', type=int, default=CB_COOLDOWN_DAYS,
+                        help='Cooldown days after CB trigger before reset is allowed')
     args = parser.parse_args()
     
     start_date = pd.Timestamp(args.start)
     end_date = pd.Timestamp(args.end)
     if end_date < start_date:
         end_date = pd.Timestamp.now().normalize()
-
-    os.makedirs(RESULTS_PATH, exist_ok=True)
+    
+    # Dynamic results path based on parameters
+    threshold_str = f"{int(abs(args.cb_threshold)*100)}pct"
+    results_path = os.path.join(PROJECT_PATH, f'results_backtest_v5_2x_god_fuse_cb{threshold_str}')
+    os.makedirs(results_path, exist_ok=True)
     
     # Load Models
     print("Loading Models...")
@@ -615,8 +707,11 @@ def main():
         return
 
     # Run Strategy
-    print("Running 2x Strategy...")
-    runner = StrategyRunner(buy_model, df)
+    print(f"Running 2x Strategy with CB Threshold={args.cb_threshold*100:.0f}%, Cooldown={args.cb_cooldown} days...")
+    runner = StrategyRunner(buy_model, df, 
+                            cb_threshold=args.cb_threshold, 
+                            cb_cooldown=args.cb_cooldown,
+                            results_path=results_path)
     res = runner.run()
     
     # Run Benchmark
@@ -625,7 +720,7 @@ def main():
     
     # Visualization & Output
     print_comparison(res, bench)
-    save_results(res, bench, runner.syn_asset.raw_df, runner.positions, RESULTS_PATH, start_date, end_date)
+    save_results(res, bench, runner.syn_asset.raw_df, runner.positions, results_path, start_date, end_date)
 
 
 def print_comparison(strat, bench):
