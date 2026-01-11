@@ -14,19 +14,26 @@
 **有KD濾網的腳本**
  **修改了回測和daily_ops的腳本，增加剩餘資金與倉位價值計算**
 
-    * 盤後
-    python backtest_v5_dca_hybrid_dynamic_n_kd_filter.py --start 2023-12-09
-    python daily_ops_v5_dynamic_n_kd_filter.py   
+**盤後會直接輸出報告，不需要跑daily_ops**
+
+    python backtest_v5_dca_hybrid_dynamic_n_kd_filter.py --start 2024-01-01  
+
     * 盤中
     python daily_ops_v5_intraday_dynamic_n_kd_filter.py -i
 
 2. 增加完全用兩倍槓桿操作的腳本 (會產出最後一天的總結報告，做明日開盤買賣的參考)
 
 **兩倍槓桿盤後**
+
     python backtest_v5_2x_god.py --start 2023-12-09 
 
-**兩倍槓桿加上保險盤後 (cb-threshold 預設 -0.15)**
-    python backtest_v5_2x_god_fuse.py --start 2023-12-09
+**兩倍槓桿加上保險盤後 (最終優化後的 Fuse 參數配置：CB_TRIGGER_THRESHOLD = -0.15 (觸發：-15% 回撤)CB_COOLDOWN_DAYS = 10 (冷卻：10 天)DELEVERAGE_RATIO = 0.50 (減倉：50%))**
+
+**會直接輸出報告，不需要跑daily_ops**
+    
+    python backtest_v5_2x_god_fuse.py --start 2026-01-05
+
+
 
 **God Mode 回測結果 (2017/10/16 - 2023/10/15)：**
     總報酬 (Total Return)：暴增至 +82.95% (淨利約 348萬)。遠勝大盤標竿 (+35.81%) 兩倍以上。相較於上一版 (+31.05%) 更是巨大的飛躍。
@@ -66,9 +73,26 @@
     ✅ -15% 確實能有效控制 Max DD 在 -25% 以內
     ❌ -20%/-30%/-35% 無法阻止 2024 閃崩 (DD 均超 -32%)
     ✅ 更嚴格的門檻 → 更低 DD，但犧牲的報酬並不明顯
+    
+    10 天冷卻期最佳：
+    最高報酬 +188.5% (比 20 天多賺 ~28 萬)
+    最佳 Sharpe Ratio 1.021
+    Max DD 僅微幅增加 0.07% (可忽略)
+    假設驗證：
+    ✅ 10 天確實能更靈活抓到 V 轉，獲利明顯更高
+    ❌ 40/60 天過於保守，Max DD 反而更差 (-27.7%)
+    💡 過長的冷卻期會讓系統錯過反彈初段，導致 V 轉行情時還在防禦模式
     交易次數觀察：
-    -15% 門檻觸發 456 次交易 (包含多次 CB_DELEVERAGE)
-    這代表它更頻繁地「逃頂」，但配合 20 天冷卻期避免反覆進出
+    10 天：640 筆 (最頻繁交易，但勝率也最高 51.6%)
+    60 天：442 筆 (減少交易但勝率下降至 41.2%)
+    🎯 建議
+    採用 10 天冷卻期 (--cb-cooldown 10) 作為預設值：
+
+    風險差異極小 (-24.68% vs -24.61%)
+    報酬明顯更優 (+188.5% vs +183.4%)
+    Sharpe Ratio 最佳
+
+    
 
 **增加strat 3策略:**
 
