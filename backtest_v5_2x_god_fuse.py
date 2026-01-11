@@ -66,7 +66,7 @@ POSITION_SIZE_MAX = 10_000_000 # 單筆金額上限 1000萬 (幾乎無上限)
 CB_TRIGGER_THRESHOLD = -0.15   # 觸發點：總資產從最高點回落 -15% (根據參數掃描最優)
 CB_RESET_THRESHOLD = -0.15     # 重置點：回撤縮小至 -15% 解除警報
 DELEVERAGE_RATIO = 0.50        # 減倉比例：強制賣出持倉的 50%
-CB_COOLDOWN_DAYS = 20          # 冷卻期：觸發後至少 20 天不恢復
+CB_COOLDOWN_DAYS = 10          # 冷卻期：觸發後至少 10 天不恢復 (根據敏感度測試最優)
 
 plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'SimHei', 'Arial Unicode MS']
 plt.rcParams['axes.unicode_minus'] = False
@@ -563,7 +563,193 @@ class StrategyRunner:
         lines.append(f"[持倉明細] (共 {active_pos_count} 倉)")
         for p in pos_details:
             lines.append(p)
+        
+        # ====== 明日交易建議 ======
+        lines.append("-" * 50)
+        lines.append("[🔮 明日交易建議 - 開盤執行]")
+        lines.append("")
+        
+        # --- 買入建議 ---
+        # 檢查所有買入條件
+        ma_filter_pass = not np.isnan(ma60) and close > ma60
+        k_filter_pass = k_val < 100
+        ai_buy_signal = (predicted_class == 1) and (ai_conf > 0.90)
+        has_cash = self.cash > 1000
+        
+        # 計算建議買入金額
+        if ma_filter_pass and k_filter_pass and ai_buy_signal and has_cash:
+            # 根據信心度決定資金比例
+            size_pct = 0.25 if ai_conf > 0.95 else 0.15
+            suggested_amount = min(self.cash * size_pct, POSITION_SIZE_MAX)
+            fee_estimate = suggested_amount * TRANSACTION_FEE
+            total_cost = suggested_amount + fee_estimate
+            
+            lines.append("   📈 【買入建議】: ✅ 建議買入")
+            lines.append(f"      💰 建議買入金額: ${suggested_amount:,.0f}")
+            lines.append(f"      💸 預估手續費:   ${fee_estimate:,.0f}")
+            lines.append(f"      💵 總成本支出:   ${total_cost:,.0f}")
+            lines.append(f"      📊 資金比例:     {size_pct*100:.0f}% (AI 信心度 {'> 95%' if ai_conf > 0.95 else '90-95%'})")
+            lines.append("")
+            lines.append("      ✅ 通過條件:")
+            lines.append(f"         - Close > MA60: {close:.2f} > {ma60:.2f}")
+            lines.append(f"         - K < 100: {k_val:.2f}")
+            lines.append(f"         - AI BUY 信心度: {ai_conf*100:.1f}%")
+        else:
+            lines.append("   📈 【買入建議】: ❌ 不建議買入")
+            lines.append(f"      💰 建議買入金額: $0")
+            lines.append("")
+            lines.append("      ❌ 未通過條件:")
+            if not ma_filter_pass:
+                lines.append(f"         - Close <= MA60: {close:.2f} {'<=' if not np.isnan(ma60) else 'N/A'} {ma60:.2f if not np.isnan(ma60) else 'N/A'}")
+            if not k_filter_pass:
+                lines.append(f"         - K >= 100: {k_val:.2f}")
+            if not ai_buy_signal:
+                if predicted_class != 1:
+                    lines.append(f"         - AI Action 為 WAIT (非 BUY)")
+                elif ai_conf <= 0.90:
+                    lines.append(f"         - AI 信心度不足: {ai_conf*100:.1f}% <= 90%")
+            if not has_cash:
+                lines.append(f"         - 現金不足: ${self.cash:,.0f} <= $1,000")
+        
+        lines.append("")
+        lines.append("-" * 30)
+        lines.append("")
+        
+        # --- 賣出建議 ---
+        lines.append("   📉 【賣出監控】: 停損/停利觸發價位")
+        lines.append("")
+        
+        if active_pos_count == 0:
+            lines.append("      (無持倉)")
+        else:
+            # 個股停損價位已在持倉明細中顯示，這裡彙整
+            lines.append("      ⚠️ 監控大盤指數對應的觸發點位:")
+            lines.append("")
+            
+            for idx, pos in enumerate(self.positions):
+                # 計算各種停損價位
+                stop_loss_price = pos.entry_price * (1 - HARD_STOP_PCT)
+                max_profit_pct = (pos.highest_price - pos.entry_price) / pos.entry_price
+                current_callback = 0.15 if max_profit_pct > 0.50 else TRAIL_CALLBACK_BASE
+                trail_stop_price = pos.highest_price * (1 - current_callback)
+                
+                price_gain_pct = (pos.highest_price - pos.entry_price) / pos.entry_price
+                is_trail_active = price_gain_pct >= TRAIL_ACTIVATION_PCT
+                
+                # 計算對應的 TWII 點位
+                curr_syn = syn_close
+                curr_twii = close
+                
+                sl_dist_pct = (stop_loss_price - curr_syn) / curr_syn
+                est_twii_sl = curr_twii * (1 + sl_dist_pct / 2)
+                
+                # 計算持倉市值
+                current_val = pos.shares * syn_close
+                
+                lines.append(f"      #倉{idx+1} (市值 ${current_val:,.0f}):")
+                lines.append(f"         🛑 硬停損觸發: 大盤跌至 {est_twii_sl:,.0f} 點時賣出")
+                lines.append(f"            → 預計收回: ${current_val * (stop_loss_price/syn_close):,.0f}")
+                
+                if is_trail_active:
+                    trail_dist_pct = (trail_stop_price - curr_syn) / curr_syn
+                    est_twii_trail = curr_twii * (1 + trail_dist_pct / 2)
+                    lines.append(f"         📉 移動停利觸發: 大盤跌至 {est_twii_trail:,.0f} 點時賣出")
+                    lines.append(f"            → 預計收回: ${current_val * (trail_stop_price/syn_close):,.0f}")
+                else:
+                    lines.append(f"         📉 移動停利: 未啟動 (需漲 {TRAIL_ACTIVATION_PCT*100:.0f}%)")
+                lines.append("")
+            
+            # 彙總今日若全數賣出的預估
+            total_sell_value = sum(p.shares * syn_close for p in self.positions)
+            sell_fee = total_sell_value * TRANSACTION_FEE
+            net_sell = total_sell_value - sell_fee
+            
+            lines.append("      " + "-" * 25)
+            lines.append(f"      📊 若今日全數賣出:")
+            lines.append(f"         總市值:     ${total_sell_value:,.0f}")
+            lines.append(f"         預估手續費: ${sell_fee:,.0f}")
+            lines.append(f"         淨收入:     ${net_sell:,.0f}")
+        
+        lines.append("")
         lines.append("="*50)
+        
+        # ====== 🚀 明日操作執行總表 (Netting) ======
+        lines.append("🚀 明日操作執行總表 (Netting)")
+        lines.append("="*50)
+
+        # 1. 計算預計賣出 (Pending Sell)
+        # 邏輯: 找出回測中【今天】(last_date) 被結清的交易
+        # 這些代表今天盤中或收盤觸發了出場條件，User 需在明天開盤補賣
+        pending_sell_amount = 0.0
+        sell_reasons = []
+        
+        today_sells = [t for t in self.closed_trades if t['exit_date'] == last_date]
+        
+        # 加上可能的融斷減倉 (雖然也是 trade，但可能需要特別標註)
+        # 其實 closed_trades 裡已經包含了這部分 (reason='CB_DELEVERAGE')
+        
+        for t in today_sells:
+            # 必須反推此筆交易賣出的金額 (Revenue)
+            # 公式: Profit = Revenue * (1-Fee) - EntryCost * (1+Fee)
+            #       Shares = Profit / [ Exit*(1-Fee) - Entry*(1+Fee) ]
+            #       Revenue = Shares * Exit
+            
+            try:
+                term = t['exit_price'] * (1 - TRANSACTION_FEE) - t['entry_price'] * (1 + TRANSACTION_FEE)
+                if abs(term) < 1e-9:
+                    calc_shares = 0
+                else:
+                    calc_shares = t['profit'] / term
+            except:
+                calc_shares = 0
+            
+            if calc_shares > 0:
+                sell_val = calc_shares * t['exit_price']
+                pending_sell_amount += sell_val
+                sell_reasons.append(f"{t['reason']} (約 ${sell_val:,.0f})")
+
+        # 2. 計算預計買進 (Pending Buy)
+        # 根據明日建議區塊的變數來計算
+        pending_buy_amount = 0.0
+        # 這裡需要重複一次判斷邏輯，確保變數可存取
+        ma_filter_pass = not np.isnan(ma60) and close > ma60
+        k_filter_pass = k_val < 100
+        ai_buy_signal = (predicted_class == 1) and (ai_conf > 0.90)
+        has_cash = self.cash > 1000
+        
+        if ma_filter_pass and k_filter_pass and ai_buy_signal and has_cash:
+             size_pct = 0.25 if ai_conf > 0.95 else 0.15
+             pending_buy_amount = min(self.cash * size_pct, POSITION_SIZE_MAX)
+
+        # 3. 淨額計算
+        net_amount = pending_buy_amount - pending_sell_amount
+        
+        # 4. 生成報告文字
+        lines.append(f"1. 預計賣出總額: ${pending_sell_amount:,.0f}")
+        for r in sell_reasons:
+            lines.append(f"   - {r}")
+        if not sell_reasons:
+             lines.append("   - 無 (今日回測無觸發賣訊)")
+
+        lines.append(f"2. 預計買進總額: ${pending_buy_amount:,.0f}")
+        if pending_buy_amount > 0:
+             lines.append(f"   - AI 建議買進 (信心度 {ai_conf*100:.1f}%)")
+        else:
+             lines.append("   - 無 (未滿足買入條件)")
+
+        lines.append("-" * 30)
+        
+        if net_amount > 0:
+            lines.append(f"⚖️ 【最終指令】: 🟢 加碼買進 (Net Buy)")
+            lines.append(f"👉 請掛單買進: ${net_amount:,.0f}")
+            lines.append(f"   (買入 ${pending_buy_amount:,.0f} - 賣出 ${pending_sell_amount:,.0f})")
+        elif net_amount < 0:
+            lines.append(f"⚖️ 【最終指令】: 🔴 部分變現 (Net Sell)")
+            lines.append(f"👉 請掛單賣出: ${abs(net_amount):,.0f}")
+            lines.append(f"   (賣出 ${pending_sell_amount:,.0f} - 買入 ${pending_buy_amount:,.0f})")
+        else:
+            lines.append(f"⚖️ 【最終指令】: ⚪ 無動作 (HOLD)")
+            lines.append(f"   (買賣相抵或無交易)")
         
         report_content = "\n".join(lines)
         
@@ -687,7 +873,8 @@ def main():
     
     # Dynamic results path based on parameters
     threshold_str = f"{int(abs(args.cb_threshold)*100)}pct"
-    results_path = os.path.join(PROJECT_PATH, f'results_backtest_v5_2x_god_fuse_cb{threshold_str}')
+    cooldown_str = f"cd{args.cb_cooldown}"
+    results_path = os.path.join(PROJECT_PATH, f'results_backtest_v5_2x_god_fuse_cb{threshold_str}_{cooldown_str}')
     os.makedirs(results_path, exist_ok=True)
     
     # Load Models
