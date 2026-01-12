@@ -163,6 +163,12 @@ python backtest_v5_dca_hybrid_dynamic_n_kd_filter_kelly.py --enable-kelly --kell
     --kd-threshold: AI 買入的 KD 過濾門檻（預設 90）。
     --sell-threshold: 賣出訊號的信心門檻（預設 0.6）。
 
+5. 增加兩個腳本，測試隔日開盤要比今天還低才能買入，結果效果不佳
+
+backtest_v5_2x_god_fuse_drop.py
+backtest_v5_dca_hybrid_dynamic_n_kd_filter_drop.py
+
+
 
 
     
