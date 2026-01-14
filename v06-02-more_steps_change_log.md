@@ -1,13 +1,17 @@
 
-# 每天執行這3個
+# 每天執行這4個
 
     * 盤中 (大倉位預測)
 
     python daily_ops_v5_intraday_dynamic_n_kd_filter.py -i
 
-    * 盤後 (大倉位確認和2x槓桿確認)
+    * 盤後 (大倉位確認 - 當日買賣)
 
     python backtest_v5_dca_hybrid_dynamic_n_kd_filter.py --start 2024-01-01  
+    
+    * 盤後 (大倉位確認和2x槓桿確認 - 隔日買賣，所有時期都稍微優於當日買賣)
+
+    python backtest_v5_dca_hybrid_dynamic_n_kd_filter_next.py --start 2024-01-01  
 
     python backtest_v5_2x_god_fuse.py --start 2026-01-08
 
@@ -166,3 +170,7 @@ backtest_v5_dca_hybrid_dynamic_n_kd_filter_drop.py
 6. 增加一個腳本，執行 Queue and Wait Buy Logic，買入信號產生後，若不滿足買入條件，不是取消，而是進入 Queue 等待日線收跌才買入
 
 backtest_v5_dca_hybrid_dynamic_n_kd_filter_queue.py
+
+7. 增加一個腳本，隔日才做買賣，方便跟單。結果績效優於當日買賣
+
+backtest_v5_dca_hybrid_dynamic_n_kd_filter_next.py
