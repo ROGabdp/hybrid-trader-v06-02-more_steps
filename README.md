@@ -3,7 +3,8 @@
 這是一個先進的演算法交易系統，結合了用於價格預測的 **LSTM-SSAM** (Long Short-Term Memory with Sequential Self-Attention) 以及用於交易決策的 **Pro Trader RL** (Reinforcement Learning)。
 
 
-# 每天執行這4個
+
+# 每天執行這5個
 
     * 盤中 (大倉位預測)
 
@@ -19,7 +20,9 @@
 
     python backtest_v5_2x_god_fuse.py --start 2026-01-08
 
-
+    * 盤後 (大倉位確 - 隔日買賣，並包含移動停利。不一定優於沒有移動停利，但較安心，有大跌的話獲利會優於沒停利)
+    
+    python backtest_v5_dca_hybrid_dynamic_n_kd_filter_next_tp.py --start 2024-01-01
 
 # v06-02-more_steps 重點
 
@@ -167,6 +170,7 @@ python backtest_v5_dca_hybrid_dynamic_n_kd_filter_kelly.py --enable-kelly --kell
     --kd-threshold: AI 買入的 KD 過濾門檻（預設 90）。
     --sell-threshold: 賣出訊號的信心門檻（預設 0.6）。
 
+
 5. 增加兩個腳本，測試隔日開盤要比今天還低才能買入，結果效果不佳
 
 backtest_v5_2x_god_fuse_drop.py
@@ -180,10 +184,11 @@ backtest_v5_dca_hybrid_dynamic_n_kd_filter_queue.py
 
 backtest_v5_dca_hybrid_dynamic_n_kd_filter_next.py
 
-
 8. 增加移動停利的腳本
 
 backtest_v5_dca_hybrid_dynamic_n_kd_filter_next_tp.py
+
+
 
 
 

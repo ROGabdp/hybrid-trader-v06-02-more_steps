@@ -1,5 +1,5 @@
 
-# 每天執行這4個
+# 每天執行這5個
 
     * 盤中 (大倉位預測)
 
@@ -14,6 +14,10 @@
     python backtest_v5_dca_hybrid_dynamic_n_kd_filter_next.py --start 2024-01-01  
 
     python backtest_v5_2x_god_fuse.py --start 2026-01-08
+
+    * 盤後 (大倉位確 - 隔日買賣，並包含移動停利。不一定優於沒有移動停利，但較安心，有大跌的話獲利會優於沒停利)
+    
+    python backtest_v5_dca_hybrid_dynamic_n_kd_filter_next_tp.py --start 2024-01-01
 
 # v06-02-more_steps 重點
 

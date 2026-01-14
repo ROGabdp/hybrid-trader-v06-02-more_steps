@@ -64,9 +64,9 @@ CACHE_DIR = os.path.join(PROJECT_PATH, 'data', 'processed')
 
 # [Modified Parameters - Trailing Profit]
 HARD_STOP_PCT = 0.08          # 硬性停損 -8%
-TRAIL_ACTIVATION = 0.10       # 啟動移動停利 +10%
-TRAIL_CALLBACK_BASE = 0.05    # 基礎回檔 5%
-TRAIL_CALLBACK_HIGH = 0.08    # 高獲利回檔 8%
+TRAIL_ACTIVATION = 0.15       # 啟動移動停利 +15% (Optimized)
+TRAIL_CALLBACK_BASE = 0.08    # 基礎回檔 8% (Optimized)
+TRAIL_CALLBACK_HIGH = 0.11    # 高獲利回檔 11% (Optimized)
 TRAIL_HIGH_PROFIT_THR = 0.25  # 高獲利門檻 25%
 
 # [v6.0] LSTM 已移除 - 以下設定已刪除:
@@ -89,6 +89,12 @@ def parse_args():
     parser.add_argument('--buy-consensus-threshold', type=float, default=0.5, help='Buy confidence threshold to veto sell signals')
     parser.add_argument('--kd-threshold', type=float, default=90, help='KD threshold for Strat 1 AI buy filter (AI buys only when K < this value)')
     parser.add_argument('--sensitivity', action='store_true', help='Run sensitivity analysis for KD thresholds [20, 40, 60, 80]')
+    # [TP Sensitivity Params]
+    parser.add_argument('--tp-activation', type=float, default=0.15, help='Trailing Profit Activation Threshold (default: 0.15)')
+    parser.add_argument('--tp-callback-base', type=float, default=0.08, help='Trailing Profit Base Callback (default: 0.08)')
+    parser.add_argument('--tp-callback-high', type=float, default=0.11, help='Trailing Profit High Callback (default: 0.11)')
+    parser.add_argument('--tp-hard-stop', type=float, default=0.08, help='Hard Stop Percentage (default: 0.08)')
+    parser.add_argument('--tp-high-profit-thr', type=float, default=0.25, help='Trailing Profit High Profit Threshold (default: 0.25)')
     return parser.parse_args()
 
 
@@ -143,6 +149,16 @@ class LeveragedSharedPoolBacktester:
         # 槓桿追蹤
         self.leverage_events = []  # 記錄槓桿啟動/結束事件
         self.leverage_periods = []  # 記錄槓桿期間 (start_date, end_date)
+
+    def set_tp_config(self, tp_activation, tp_callback_base, tp_callback_high, tp_hard_stop, tp_high_profit_thr=0.25):
+        self.tp_config = {
+            'ACTIVATION': tp_activation,
+            'CALLBACK_BASE': tp_callback_base,
+            'CALLBACK_HIGH': tp_callback_high,
+            'HARD_STOP': tp_hard_stop,
+            'HIGH_PROFIT_THR': tp_high_profit_thr
+        }
+
 
     def run(self, df: pd.DataFrame, feature_cols: list) -> dict:
         features = df[feature_cols].values.astype(np.float32)
@@ -508,8 +524,17 @@ class LeveragedSharedPoolBacktester:
                 self.daily_confidence.append(log_entry)
                 
                 # [TP] Complex Stop Logic
+                # Use params from self.tp_config if set, else GLOBAL defaults
+                tp = getattr(self, 'tp_config', {
+                    'ACTIVATION': TRAIL_ACTIVATION,
+                    'CALLBACK_BASE': TRAIL_CALLBACK_BASE,
+                    'CALLBACK_HIGH': TRAIL_CALLBACK_HIGH,
+                    'HARD_STOP': HARD_STOP_PCT,
+                    'HIGH_PROFIT_THR': TRAIL_HIGH_PROFIT_THR
+                })
+                
                 # 1. Hard Stop
-                hard_stop_price = pos['buy_price'] * (1 - HARD_STOP_PCT)
+                hard_stop_price = pos['buy_price'] * (1 - tp['HARD_STOP'])
                 is_hard_stop = (open_price <= hard_stop_price) # Check against Open/Close? Logic loop uses Close usually, but execution is Next Open. 
                 # Let's use Close for decision trigger as per design "Decisions on Close".
                 is_hard_stop = price <= hard_stop_price
@@ -520,10 +545,10 @@ class LeveragedSharedPoolBacktester:
                 max_profit_pct = (pos_highest - pos['buy_price']) / pos['buy_price']
                 
                 # Determine callback
-                callback = TRAIL_CALLBACK_HIGH if max_profit_pct > TRAIL_HIGH_PROFIT_THR else TRAIL_CALLBACK_BASE
+                callback = tp['CALLBACK_HIGH'] if max_profit_pct > tp['HIGH_PROFIT_THR'] else tp['CALLBACK_BASE']
                 trail_stop_price = pos_highest * (1 - callback)
                 
-                is_trail_active = max_profit_pct >= TRAIL_ACTIVATION
+                is_trail_active = max_profit_pct >= tp['ACTIVATION']
                 is_trail_stop = is_trail_active and (price <= trail_stop_price)
                 
                 # Combined
@@ -541,11 +566,13 @@ class LeveragedSharedPoolBacktester:
                 if (is_sell_signal and not is_consensus_hold) or is_stop_loss:
                     # 產生賣出訊號 -> 明天開盤執行
                     log_entry['action'] = 'SELL_SIGNAL'
+                    stop_reason = "HARD_STOP" if is_hard_stop else ("TRAIL_STOP" if is_trail_stop else None)
                     positions_to_sell.append({
                         'type': 'SELL_AI',
                         'pos_ref': pos,
                         'confidence': sell_conf,
-                        'is_stop_loss': is_stop_loss
+                        'is_stop_loss': is_stop_loss,
+                        'stop_reason': stop_reason
                     })
                     if is_stop_loss:
                         stop_loss_signal_generated = True
@@ -750,6 +777,7 @@ class SharedPoolBacktester:
         self.ai_chunk_amount = ai_chunk_amount
         self.sell_threshold = sell_threshold
         self.buy_consensus_threshold = buy_consensus_threshold
+        self.buy_consensus_threshold = buy_consensus_threshold
         
         self.trades = []
         self.equity_curve = []
@@ -758,9 +786,18 @@ class SharedPoolBacktester:
         self.ai_sell_signals = []
         self.filtered_signals = []     # AI想買但被濾網擋下的訊號
         self.daily_confidence = []
-        self.daily_action_summary = []  # 每日操作摘要 (一天一筆)
-        self.open_positions = []       # 回測結束時的未平倉 AI 持倉
+        self.daily_action_summary = []
+        self.open_positions = []
         self.total_invested = 0
+        
+    def set_tp_config(self, tp_activation, tp_callback_base, tp_callback_high, tp_hard_stop, tp_high_profit_thr=0.25):
+        self.tp_config = {
+            'ACTIVATION': tp_activation,
+            'CALLBACK_BASE': tp_callback_base,
+            'CALLBACK_HIGH': tp_callback_high,
+            'HARD_STOP': tp_hard_stop,
+            'HIGH_PROFIT_THR': tp_high_profit_thr
+        }
 
     def run(self, df: pd.DataFrame, feature_cols: list) -> dict:
         features = df[feature_cols].values.astype(np.float32)
@@ -978,18 +1015,27 @@ class SharedPoolBacktester:
                 self.daily_confidence.append(log_entry)
                 
                 # [TP] Complex Stop Logic (Strat 2)
+                # Use params from self.tp_config if set, else GLOBAL defaults
+                tp = getattr(self, 'tp_config', {
+                    'ACTIVATION': TRAIL_ACTIVATION,
+                    'CALLBACK_BASE': TRAIL_CALLBACK_BASE,
+                    'CALLBACK_HIGH': TRAIL_CALLBACK_HIGH,
+                    'HARD_STOP': HARD_STOP_PCT,
+                    'HIGH_PROFIT_THR': TRAIL_HIGH_PROFIT_THR
+                })
+
                 # 1. Hard Stop
-                hard_stop_price = pos['buy_price'] * (1 - HARD_STOP_PCT)
+                hard_stop_price = pos['buy_price'] * (1 - tp['HARD_STOP'])
                 is_hard_stop = price <= hard_stop_price
 
                 # 2. Trailing Stop
                 pos_highest = pos['highest_price']
                 max_profit_pct = (pos_highest - pos['buy_price']) / pos['buy_price']
                 
-                callback = TRAIL_CALLBACK_HIGH if max_profit_pct > TRAIL_HIGH_PROFIT_THR else TRAIL_CALLBACK_BASE
+                callback = tp['CALLBACK_HIGH'] if max_profit_pct > tp['HIGH_PROFIT_THR'] else tp['CALLBACK_BASE']
                 trail_stop_price = pos_highest * (1 - callback)
                 
-                is_trail_active = max_profit_pct >= TRAIL_ACTIVATION
+                is_trail_active = max_profit_pct >= tp['ACTIVATION']
                 is_trail_stop = is_trail_active and (price <= trail_stop_price)
                 
                 is_stop_loss = is_hard_stop or is_trail_stop
@@ -1004,7 +1050,14 @@ class SharedPoolBacktester:
 
                 if (is_sell_signal and not is_consensus_hold) or is_stop_loss:
                     log_entry['action'] = 'SELL_SIGNAL'
-                    positions_to_sell.append({'type': 'SELL_AI', 'pos_ref': pos, 'confidence': sell_conf})
+                    stop_reason = "HARD_STOP" if is_hard_stop else ("TRAIL_STOP" if is_trail_stop else None)
+                    positions_to_sell.append({
+                        'type': 'SELL_AI', 
+                        'pos_ref': pos, 
+                        'confidence': sell_conf,
+                        'is_stop_loss': is_stop_loss,
+                        'stop_reason': stop_reason
+                    })
                     day_action = 'SELL_SIGNAL'
                     day_sell_conf = sell_conf
             
@@ -1314,6 +1367,14 @@ def main():
         buy_consensus_threshold=args.buy_consensus_threshold,
         kd_threshold=args.kd_threshold
     )
+    # [TP] Configure Strategy 1
+    bt1.set_tp_config(
+        tp_activation=args.tp_activation,
+        tp_callback_base=args.tp_callback_base,
+        tp_callback_high=args.tp_callback_high,
+        tp_hard_stop=args.tp_hard_stop,
+        tp_high_profit_thr=args.tp_high_profit_thr
+    )
     m1 = bt1.run(twii_backtest_df, hybrid.FEATURE_COLS)
 
     print("\n[Backtest] Running Strategy 2: Shared Pool...")
@@ -1323,6 +1384,14 @@ def main():
         YEARLY_CAPITAL,
         sell_threshold=args.sell_threshold,
         buy_consensus_threshold=args.buy_consensus_threshold
+    )
+    # [TP] Configure Strategy 2
+    bt2.set_tp_config(
+        tp_activation=args.tp_activation,
+        tp_callback_base=args.tp_callback_base,
+        tp_callback_high=args.tp_callback_high,
+        tp_hard_stop=args.tp_hard_stop,
+        tp_high_profit_thr=args.tp_high_profit_thr
     )
     m2 = bt2.run(twii_backtest_df, hybrid.FEATURE_COLS)
     
@@ -1907,7 +1976,11 @@ def generate_end_date_summary(bt1, twii_df, start_date, end_date, buy_model, sel
                  shares = pos['shares']
                  conf = action.get('confidence', 0)
                  is_stop = action.get('is_stop_loss', False)
-                 status = "停損" if is_stop else "獲利/訊號"
+                 stop_reason = action.get('stop_reason', 'HARD_STOP')
+                 if is_stop:
+                     status = "📉 移動停利" if stop_reason == "TRAIL_STOP" else "🛑 硬性停損"
+                 else:
+                     status = "獲利/訊號"
                  lines.append(f"      • 🔴 SELL AI:  持倉 {buy_date_str} ({shares} 股) | Conf {conf*100:.1f}% | {status}")
              elif act_type == 'SELL_ALL_DCA':
                  lines.append(f"      • 🛑 SELL ALL DCA (DCA 連動停損)")
@@ -1938,7 +2011,13 @@ def generate_end_date_summary(bt1, twii_df, start_date, end_date, buy_model, sel
                       buy_date_str = twii_df.index[buy_idx].strftime('%Y-%m-%d')
                       shares = pos['shares']
                       conf = action.get('confidence', 0)
-                      lines.append(f"      • 🔴 SELL AI:  持倉 {buy_date_str} ({shares} 股) | Conf {conf*100:.1f}%")
+                      is_stop = action.get('is_stop_loss', False)
+                      stop_reason = action.get('stop_reason', 'HARD_STOP')
+                      if is_stop:
+                          status = "📉 移動停利" if stop_reason == "TRAIL_STOP" else "🛑 硬性停損"
+                      else:
+                          status = "獲利/訊號"
+                      lines.append(f"      • 🔴 SELL AI:  持倉 {buy_date_str} ({shares} 股) | Conf {conf*100:.1f}% | {status}")
          else:
               lines.append("   📌 Strategy 2: No Actions (HOLD)")
     
