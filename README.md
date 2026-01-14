@@ -180,7 +180,13 @@ backtest_v5_dca_hybrid_dynamic_n_kd_filter_queue.py
 
 backtest_v5_dca_hybrid_dynamic_n_kd_filter_next.py
 
-    
+
+8. 增加移動停利的腳本
+
+backtest_v5_dca_hybrid_dynamic_n_kd_filter_next_tp.py
+
+
+
 
 # hybrid-trader-v06-02 是以 hybrid-trader-v06 作為基礎來修改的
 

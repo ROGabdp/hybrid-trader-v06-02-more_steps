@@ -174,3 +174,7 @@ backtest_v5_dca_hybrid_dynamic_n_kd_filter_queue.py
 7. 增加一個腳本，隔日才做買賣，方便跟單。結果績效優於當日買賣
 
 backtest_v5_dca_hybrid_dynamic_n_kd_filter_next.py
+
+8. 增加移動停利的腳本
+
+backtest_v5_dca_hybrid_dynamic_n_kd_filter_next_tp.py
