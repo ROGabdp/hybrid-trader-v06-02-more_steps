@@ -168,6 +168,10 @@ python backtest_v5_dca_hybrid_dynamic_n_kd_filter_kelly.py --enable-kelly --kell
 backtest_v5_2x_god_fuse_drop.py
 backtest_v5_dca_hybrid_dynamic_n_kd_filter_drop.py
 
+6. 增加一個腳本，執行 Queue and Wait Buy Logic，買入信號產生後，若不滿足買入條件，不是取消，而是進入 Queue 等待日線收跌才買入
+
+backtest_v5_dca_hybrid_dynamic_n_kd_filter_queue.py
+
 
 
 
